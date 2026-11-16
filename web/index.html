@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>audio2notes</title>
+<script src="/vendor/wavesurfer.min.js"></script>
+<script src="/vendor/regions.min.js"></script>
+<script src="/vendor/timeline.min.js"></script>
+<script src="/vendor/plotly.min.js"></script>
+<style>
+  :root {
+    --bg: #121418; --panel: #1b1e24; --panel2: #23272f; --line: #2e333c;
+    --text: #e7e4dc; --muted: #9a9890; --accent: #f0a53a; --accent2: #ffcf85;
+    --voice: #5cc8e6; --simple: #b388ff; --sa: #ff6b6b; --ok: #6fcf97; --err: #ff7b72; --range: #6fcf97;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 22px 28px 8px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: .3px; }
+  header h1 span { color: var(--accent); }
+  header p { margin: 0; color: var(--muted); }
+  main { max-width: 1280px; margin: 0 auto; padding: 8px 20px 60px; display: grid; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card.disabled { opacity: .45; pointer-events: none; }
+  .sub { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
+  .step { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-weight: 600; font-size: 15px; }
+  .step b { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+            background: var(--accent); color: #1b1305; font-size: 13px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .row + .row { margin-top: 10px; }
+  .spacer { flex: 1; }
+  button, select, input { font: inherit; color: var(--text); }
+  button { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #1b1305; border-color: var(--accent); font-weight: 600; padding: 9px 18px; }
+  button.primary:hover:not(:disabled) { background: var(--accent2); }
+  button.attn { box-shadow: 0 0 0 2px var(--accent2); animation: glow 1.4s ease-in-out infinite; }
+  @keyframes glow { 50% { box-shadow: 0 0 0 4px rgba(255,207,133,.35); } }
+  kbd { font: 11px var(--mono); background: #2c3038; border: 1px solid #3a3f48; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted); margin-left: 4px; }
+  select, input[type=number] { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  input[type=number] { width: 86px; }
+  input[type=range] { accent-color: var(--accent); }
+  label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  label.c { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); cursor: pointer; }
+  #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 22px; text-align: center; color: var(--muted); cursor: pointer; transition: .15s; }
+  #drop.over, #drop:hover { border-color: var(--accent); color: var(--text); }
+  #fileinfo { color: var(--muted); }
+  #waveform { margin: 10px 0 4px; border-radius: 8px; background: #16191e; }
+  .sel-info { font-family: var(--mono); color: var(--accent2); }
+  .hint { color: var(--muted); font-size: 12px; }
+  .detail { display: flex; align-items: center; gap: 8px; }
+  .detail output { font-weight: 600; color: var(--accent2); min-width: 70px; font-size: 13px; }
+
+  /* progress */
+  .progress { margin-top: 12px; display: none; }
+  .progress.show { display: block; }
+  .bar { height: 12px; background: var(--panel2); border-radius: 6px; overflow: hidden; position: relative; }
+  .fill { height: 100%; width: 0; border-radius: 6px; transition: width .35s ease;
+          background: repeating-linear-gradient(-45deg, var(--accent) 0 12px, var(--accent2) 12px 24px);
+          background-size: 34px 34px; animation: stripes .8s linear infinite; }
+  .bar.indet .fill { width: 30% !important; position: absolute; animation: stripes .8s linear infinite, slide 1.4s ease-in-out infinite; }
+  @keyframes stripes { to { background-position: 34px 0; } }
+  @keyframes slide { 0% { left: -30%; } 100% { left: 100%; } }
+  .ptext { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .ptext .stage::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+          background: var(--accent); margin-right: 7px; animation: pulse 1s ease-in-out infinite; }
+  .progress.done .stage::before { background: var(--ok); animation: none; }
+  .progress.done .fill { animation: none; background: var(--ok); }
+  .progress.error .fill { animation: none; background: var(--err); }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .error { color: var(--err); }
+
+  /* plot + transport */
+  #plot { width: 100%; height: 540px; }
+  #plot.rangemode { cursor: col-resize; }
+  .transport { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--line); background: var(--panel2); padding: 6px 11px; }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--accent); color: #1b1305; font-weight: 600; }
+  .seg button:disabled { opacity: .35; }
+  #playbtn { width: 84px; }
+  #tdisp { font-family: var(--mono); color: var(--accent2); min-width: 120px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; font-size: 13px; }
+  .chip b { color: var(--accent2); font-weight: 600; }
+  pre#notation { background: #15171b; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+                 font: 13px/1.5 var(--mono); overflow-x: auto; max-height: 420px; white-space: pre; }
+  .downloads a { color: var(--accent2); margin-right: 14px; }
+  .legend-note { font-size: 12px; color: var(--muted); }
+  .legend-note i { display: inline-block; width: 14px; height: 9px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: middle; }
+
+  /* refine */
+  .toolbox { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .toolbox h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; }
+  .toolbox button { background: #2a2e37; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+  .selinfo { font-family: var(--mono); color: var(--accent2); font-size: 13px; min-height: 20px; margin-bottom: 8px; }
+  .badge { background: var(--accent); color: #1b1305; border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 600; }
+  .badge.ok { background: var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <h1>audio<span>2</span>notes</h1>
+  <p>song → isolated vocals → pitch → sargam / harmonium notation</p>
+</header>
+<main>
+
+<!-- STEP 1 -->
+<section class="card" id="card-file">
+  <div class="step"><b>1</b>Choose an audio file</div>
+  <div id="drop">Drop an audio file here or <u>click to browse</u><br><span class="hint">mp3 · m4a · wav · flac · ogg · opus · wma · video files…</span></div>
+  <input type="file" id="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.flac,.ogg,.opus,.wma,.aac" hidden>
+  <div class="progress" id="prog-upload"><div class="bar indet"><div class="fill"></div></div>
+    <div class="ptext"><span class="stage">Uploading & decoding…</span><span></span></div></div>
+  <div id="fileinfo" style="margin-top:8px"></div>
+</section>
+
+<!-- STEP 2 -->
+<section class="card disabled" id="card-select">
+  <div class="step"><b>2</b>Select the part to transcribe <span class="hint" style="font-weight:400">— drag the region's edges (handles) or the region itself; drag on empty waveform to draw a new one</span></div>
+  <div id="waveform"></div>
+  <div class="row" style="margin-top:8px">
+    <button id="btn-play-sel">▶ Play selection</button>
+    <button id="btn-stop">■ Stop</button>
+    <button id="btn-all">Select all</button>
+    <label class="f">Start (s)<input type="number" id="sel-start" step="0.1" min="0"></label>
+    <label class="f">End (s)<input type="number" id="sel-end" step="0.1" min="0"></label>
+    <span class="sel-info" id="sel-info"></span>
+    <span class="spacer"></span>
+    <label class="f">Zoom<input type="range" id="zoom" min="0" max="300" value="0"></label>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <label class="f">Separation model
+      <select id="model">
+        <option value="htdemucs_ft">Best quality (htdemucs_ft)</option>
+        <option value="htdemucs">Faster (htdemucs)</option>
+      </select></label>
+    <button class="primary" id="btn-extract">Extract vocals</button>
+    <span class="hint" id="extract-hint"></span>
+  </div>
+  <div class="progress" id="prog-extract"><div class="bar"><div class="fill"></div></div>
+    <div class="ptext"><span class="stage"></span><span class="pct"></span></div></div>
+</section>
+
+<!-- STEP 3 + 4 -->
+<section class="card disabled" id="card-pitch">
+  <div class="step"><b>3</b>Vocal pitch &amp; notation</div>
+  <div class="row">
+    <label class="f">Detail
+      <span class="detail"><input type="range" id="detail" min="1" max="5" step="1" value="3"><output id="detail-out">Normal</output></span></label>
+    <label class="c" title="Split notes where a new syllable starts (consonant attacks in the vocals)"><input type="checkbox" id="split-onsets" checked> Split at syllables</label>
+    <label class="f">Instrument<select id="instrument"></select></label>
+    <label class="f">Tonic (Sa)<select id="tonic"><option value="">Auto</option></select></label>
+    <button class="primary" id="btn-notate">Extract notation</button>
+    <span class="hint" id="notate-hint"></span>
+  </div>
+  <details>
+    <summary>Advanced transcription settings (the Detail slider sets the first five)</summary>
+    <div class="grid">
+      <label class="f">Shortest note (s)<input type="number" id="p-min_note" step="0.01" value="0.08"></label>
+      <label class="f">Absorb ornaments below (s)<input type="number" id="p-ornament" step="0.01" value="0.15"></label>
+      <label class="f">Note-change hysteresis (st)<input type="number" id="p-hysteresis" step="0.02" value="0.2"></label>
+      <label class="f">Glide filter up to (s)<input type="number" id="p-glide_max" step="0.01" value="0.2"></label>
+      <label class="f">Pitch smoothing (s)<input type="number" id="p-smooth" step="0.01" value="0.05"></label>
+      <label class="f">Syllable sensitivity (lower = more)<input type="number" id="p-onset_delta" step="0.01" value="0.12"></label>
+      <label class="f">Simple: shortest note (s)<input type="number" id="p-simple_min" step="0.01" value="0.25"></label>
+      <label class="f">Merge gap (s)<input type="number" id="p-merge_gap" step="0.01" value="0.12"></label>
+      <label class="f">Voicing threshold (0-1)<input type="number" id="p-periodicity" step="0.05" value="0.5"></label>
+      <label class="f">Silence gate (dB)<input type="number" id="p-silence_db" step="1" value="-40"></label>
+      <label class="f">Snap short notes to scale ≤ (s)<input type="number" id="p-snap_max" step="0.05" value="0.4"></label>
+      <label class="f">Scale min share<input type="number" id="p-scale_min" step="0.01" value="0.03"></label>
+      <label class="f">Transpose output (st)<input type="number" id="p-transpose" step="1" value="0"></label>
+      <label class="f">Scale snapping<select id="p-no_snap"><option value="">On</option><option value="1">Off</option></select></label>
+      <label class="f">Tuning correction<select id="p-no_tuning"><option value="">On</option><option value="1">Off (assume A440)</option></select></label>
+    </div>
+  </details>
+  <div class="progress" id="prog-notate"><div class="bar"><div class="fill"></div></div>
+    <div class="ptext"><span class="stage"></span><span class="pct"></span></div></div>
+
+  <div class="transport" style="margin-top:14px">
+    <button id="playbtn">▶ Play</button>
+    <div class="seg" id="src">
+      <button data-src="selection" class="on">Original</button>
+      <button data-src="vocals">Vocals</button>
+      <button data-src="accompaniment">Music only</button>
+      <button data-src="instrument" disabled>Instrument</button>
+      <button data-src="vocals+instrument" disabled>Vocals + instrument</button>
+      <button data-src="original+instrument" disabled>Original + instrument</button>
+    </div>
+    <span id="tdisp">0:00.00</span>
+    <span class="spacer"></span>
+    <span class="hint" id="plot-hint">click the plot to move the playhead · double-click to reset zoom</span>
+  </div>
+  <div id="plot"></div>
+  <div class="legend-note" id="legend-note"></div>
+
+  <!-- STEP 4 -->
+  <div class="sub" id="refine" style="display:none">
+    <div class="step"><b>4</b>Refine the notation <span class="hint" style="font-weight:400">— fix individual notes, or re-transcribe a passage at a different detail level</span></div>
+    <div class="row">
+      <label class="f">Working copy starts from
+        <div class="seg" id="base">
+          <button data-v="detailed" class="on">Detailed</button>
+          <button data-v="simple">Simple</button>
+        </div></label>
+      <label class="f">Drag on plot to
+        <div class="seg" id="dragmode">
+          <button data-m="zoom" class="on">Zoom</button>
+          <button data-m="range">Select range</button>
+        </div></label>
+      <button id="btn-undo" title="Ctrl+Z">↶ Undo</button>
+      <button id="btn-redo" title="Ctrl+Y">↷ Redo</button>
+      <span class="spacer"></span>
+      <span id="edit-state"></span>
+      <button class="primary" id="btn-render">Render edits</button>
+    </div>
+    <div class="progress" id="prog-render"><div class="bar"><div class="fill"></div></div>
+      <div class="ptext"><span class="stage"></span><span class="pct"></span></div></div>
+
+    <div class="two">
+      <div class="toolbox">
+        <h4>Note — click a note on the plot</h4>
+        <div class="selinfo" id="note-info">No note selected (tools act on the note under the playhead)</div>
+        <div class="row">
+          <button data-act="split" title="Split the note at the playhead; both halves re-fit to the sung pitch">✂ Split at playhead<kbd>S</kbd></button>
+          <button data-act="merge">⨝ Merge with next<kbd>M</kbd></button>
+          <button data-act="delete">🗑 Delete<kbd>Del</kbd></button>
+          <button data-act="add" title="Add a note at the playhead (fills the gap, pitch fitted to the vocals)">＋ Add at playhead<kbd>N</kbd></button>
+        </div>
+        <div class="row">
+          <button data-act="up">▲ Up<kbd>↑</kbd></button>
+          <button data-act="down">▼ Down<kbd>↓</kbd></button>
+          <button data-act="fit" title="Set pitch to the median sung pitch within the note">≈ Fit to vocals<kbd>F</kbd></button>
+          <button data-act="start">⇤ Start → playhead<kbd>[</kbd></button>
+          <button data-act="end">⇥ End → playhead<kbd>]</kbd></button>
+          <button data-act="playnote" title="Play just this note (current source)">▶ Play note<kbd>P</kbd></button>
+        </div>
+      </div>
+      <div class="toolbox">
+        <h4>Range — choose “Select range”, then drag on the plot</h4>
+        <div class="selinfo" id="range-info">No range selected</div>
+        <div class="row">
+          <label class="f">Detail for this range
+            <span class="detail"><input type="range" id="rdetail" min="1" max="5" step="1" value="4"><output id="rdetail-out">Fine</output></span></label>
+          <label class="c"><input type="checkbox" id="rsplit" checked> Split at syllables</label>
+        </div>
+        <div class="row">
+          <button data-act="retranscribe" title="Replace the notes in the range with a fresh transcription at the chosen detail">⟳ Re-transcribe range<kbd>R</kbd></button>
+          <button data-act="fitrange">≈ Fit all to vocals</button>
+          <button data-act="clearrange">🗑 Clear range</button>
+          <button data-act="playrange">▶ Play range</button>
+        </div>
+      </div>
+    </div>
+    <div class="hint" style="margin-top:8px">Keys: <kbd>←</kbd><kbd>→</kbd> move playhead 20 ms (<kbd>Shift</kbd> 200 ms) · <kbd>,</kbd><kbd>.</kbd> previous / next note · <kbd>Space</kbd> play/pause · <kbd>Esc</kbd> clear selection · <kbd>Ctrl+Z</kbd> undo</div>
+  </div>
+
+  <div id="results" style="display:none">
+    <div class="chips" id="chips"></div>
+    <pre id="notation"></pre>
+    <div class="downloads" id="downloads"></div>
+  </div>
+</section>
+</main>
+
+<script>
+const NOTE = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const SG = ["S","r","R","g","G","m","M","P","d","D","n","N"];
+// Detail level -> segmentation parameters (level 3 = defaults). Overwritten at startup with the
+// server's values (audio2notes/transcribe.py DETAIL_PRESETS) so GUI and CLI stay identical.
+let LEVELS = ["Coarse", "Relaxed", "Normal", "Fine", "Very fine"];
+let PRESETS = {
+  min_note:   [0.25, 0.14, 0.08, 0.05, 0.03],
+  ornament:   [0.30, 0.20, 0.15, 0.07, 0.00],
+  hysteresis: [0.35, 0.28, 0.20, 0.12, 0.06],
+  glide_max:  [0.30, 0.25, 0.20, 0.10, 0.00],
+  smooth:     [0.09, 0.07, 0.05, 0.03, 0.02],
+};
+const preset = lvl => Object.fromEntries(Object.entries(PRESETS).map(([k, v]) => [k, v[lvl - 1]]));
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = t => { t = Math.max(0, t); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(2).padStart(5, "0")}`; };
+const midiName = m => NOTE[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+const sargam = (m, sa) => { const rel = m - sa, oct = Math.floor(rel / 12), s = SG[((rel % 12) + 12) % 12];
+                            return oct < 0 ? s + ".".repeat(-oct) : s + "'".repeat(oct); };
+const clone = x => JSON.parse(JSON.stringify(x));
+
+let S = { sid: null, duration: 0, ws: null, regions: null, region: null,
+          pitch: null, extractedSel: null, notation: null, src: "selection",
+          base: "detailed", edit: [], rendered: null, dirty: 0, undo: [], redo: [],
+          selIdx: -1, cursor: null, range: null, dragmode: "zoom", stopAt: null };
+
+// ---------------------------------------------------------------- helpers
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  if (!r.ok) throw new Error((await r.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300));
+  return r.json();
+}
+
+function progressUI(id) {
+  const el = $(id), fill = el.querySelector(".fill"), bar = el.querySelector(".bar"),
+        stage = el.querySelector(".stage"), pct = el.querySelector(".pct");
+  const t0 = performance.now();
+  el.className = "progress show";
+  return {
+    set(frac, text) {
+      const secs = (performance.now() - t0) / 1000;
+      bar.classList.toggle("indet", frac <= 0.001);
+      fill.style.width = (frac * 100).toFixed(1) + "%";
+      stage.textContent = text;
+      let eta = "";
+      if (frac > 0.05 && frac < 1) eta = ` · ~${Math.round(secs / frac - secs)}s left`;
+      pct.textContent = `${(frac * 100).toFixed(0)}% · ${secs.toFixed(0)}s${eta}`;
+    },
+    done(text) { el.className = "progress show done"; bar.classList.remove("indet"); fill.style.width = "100%"; stage.textContent = text; },
+    fail(msg) { el.className = "progress show error"; bar.classList.remove("indet"); stage.innerHTML = `<span class="error">${msg}</span>`; },
+  };
+}
+
+async function runJob(path, body, ui) {
+  const { job } = await api(path, body);
+  while (true) {
+    await new Promise(r => setTimeout(r, 300));
+    const j = await api(`/api/job/${job}`);
+    if (j.state === "error") throw new Error(j.error);
+    ui.set(j.progress, j.stage);
+    if (j.state === "done") return j.result;
+  }
+}
+
+// ---------------------------------------------------------------- step 1: file
+const drop = $("#drop"), fileInput = $("#file");
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+fileInput.onchange = () => fileInput.files[0] && loadFile(fileInput.files[0]);
+
+async function loadFile(file) {
+  const ui = $("#prog-upload"); ui.className = "progress show";
+  $("#fileinfo").textContent = "";
+  try {
+    const fd = new FormData(); fd.append("file", file);
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    if (!r.ok) throw new Error((await r.text()).replace(/<[^>]+>/g, " ").trim().slice(0, 300));
+    const info = await r.json();
+    ui.className = "progress";
+    S.sid = info.sid; S.duration = info.duration;
+    $("#fileinfo").innerHTML = `<b>${info.name}</b> · ${fmt(info.duration)}`;
+    resetPitch();
+    initWaveform(info.preview);
+    $("#card-select").classList.remove("disabled");
+  } catch (e) {
+    ui.className = "progress"; $("#fileinfo").innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+// ---------------------------------------------------------------- step 2: waveform + region
+function initWaveform(url) {
+  if (S.ws) S.ws.destroy();
+  S.region = null;
+  const regions = WaveSurfer.Regions.create();
+  const ws = WaveSurfer.create({
+    container: "#waveform", url, height: 120, waveColor: "#5a6070", progressColor: "#8a90a0",
+    cursorColor: css("--accent"), barWidth: 2, barGap: 1, barRadius: 2, normalize: true,
+    plugins: [regions, WaveSurfer.Timeline.create({ height: 18, style: { color: "#9a9890", fontSize: "11px" } })],
+  });
+  S.ws = ws; S.regions = regions;
+  ws.on("decode", () => {
+    const end = Math.min(S.duration, 30);
+    S.region = regions.addRegion({ start: 0, end, color: "rgba(240,165,58,0.22)", drag: true, resize: true });
+    styleRegion(S.region);
+    syncSelInputs();
+    regions.enableDragSelection({ color: "rgba(240,165,58,0.22)" });
+  });
+  regions.on("region-created", r => {
+    if (S.region && r !== S.region) { S.region.remove(); }
+    S.region = r; styleRegion(r); syncSelInputs();
+  });
+  regions.on("region-updated", syncSelInputs);
+  regions.on("region-out", r => { if (r === S.region) ws.pause(); });
+}
+function styleRegion(r) {
+  const el = r.element; if (!el) return;
+  el.querySelectorAll('[part~="region-handle"]').forEach(h => {
+    h.style.width = "6px"; h.style.background = css("--accent"); h.style.borderRadius = "3px"; h.style.opacity = "0.95";
+  });
+}
+function syncSelInputs() {
+  if (!S.region) return;
+  $("#sel-start").value = S.region.start.toFixed(2);
+  $("#sel-end").value = S.region.end.toFixed(2);
+  $("#sel-info").textContent = `${fmt(S.region.start)} → ${fmt(S.region.end)}  (${(S.region.end - S.region.start).toFixed(1)} s)`;
+  const ex = S.extractedSel;
+  const changed = ex && (Math.abs(ex.start - S.region.start) > 0.01 || Math.abs(ex.end - S.region.end) > 0.01);
+  $("#extract-hint").textContent = changed ? "Selection changed — extract again to analyse the new range." : "";
+}
+function setRegionFromInputs() {
+  if (!S.region) return;
+  let a = Math.max(0, +$("#sel-start").value), b = Math.min(S.duration, +$("#sel-end").value);
+  if (b - a < 1) return;
+  S.region.setOptions({ start: a, end: b }); syncSelInputs();
+}
+$("#sel-start").onchange = setRegionFromInputs;
+$("#sel-end").onchange = setRegionFromInputs;
+$("#btn-play-sel").onclick = () => S.region && S.region.play();
+$("#btn-stop").onclick = () => S.ws && S.ws.pause();
+$("#btn-all").onclick = () => { if (S.region) { S.region.setOptions({ start: 0, end: S.duration }); syncSelInputs(); } };
+$("#zoom").oninput = e => S.ws && S.ws.zoom(+e.target.value);
+
+$("#btn-extract").onclick = async () => {
+  if (!S.region) return;
+  const btn = $("#btn-extract"); btn.disabled = true;
+  S.ws.pause();
+  const ui = progressUI("#prog-extract");
+  ui.set(0, "Starting…");
+  try {
+    const sel = { start: S.region.start, end: S.region.end };
+    const res = await runJob("/api/extract", { sid: S.sid, ...sel, model: $("#model").value }, ui);
+    ui.done(`Vocals extracted & pitch tracked · voiced ${res.voiced_pct.toFixed(0)}% of frames`);
+    S.extractedSel = sel; S.pitch = res; S.notation = null; S.edit = []; S.rendered = null;
+    S.selIdx = -1; S.range = null; S.cursor = res.start;
+    syncSelInputs();
+    $("#card-pitch").classList.remove("disabled");
+    $("#results").style.display = "none"; $("#refine").style.display = "none";
+    $("#prog-notate").className = "progress";
+    enableInstrumentSources(false);
+    setSource("vocals");
+    drawPlot();
+  } catch (e) { ui.fail(e.message); }
+  btn.disabled = false;
+};
+
+// ---------------------------------------------------------------- plot
+function resetPitch() {
+  S.pitch = null; S.notation = null; S.extractedSel = null; S.edit = []; S.rendered = null;
+  $("#card-pitch").classList.add("disabled");
+  $("#results").style.display = "none"; $("#refine").style.display = "none";
+  ["#prog-extract", "#prog-notate", "#prog-render"].forEach(id => $(id).className = "progress");
+  Plotly.purge("plot");
+}
+const tuningSt = () => S.notation ? S.notation.tuning_cents / 100 : 0;
+
+function yTicks(lo, hi, tuning, saMidi) {
+  const vals = [], text = [];
+  for (let m = Math.ceil(lo - tuning); m <= Math.floor(hi - tuning); m++) {
+    vals.push(m + tuning);
+    text.push(midiName(m) + (saMidi != null ? "  " + sargam(m, saMidi) : ""));
+  }
+  return { tickvals: vals, ticktext: text };
+}
+
+function yRange() {
+  const vals = S.pitch.midi.filter(x => x != null).sort((a, b) => a - b);
+  const q = f => vals.length ? vals[Math.floor(f * (vals.length - 1))] : 60;
+  return [Math.floor(q(0.01)) - 2, Math.ceil(q(0.99)) + 2];
+}
+
+function noteBars(notes, name, style, visible, meta) {
+  const tuning = tuningSt();
+  return {
+    type: "bar", orientation: "h", name, meta, base: notes.map(x => x.start), x: notes.map(x => x.end - x.start),
+    y: notes.map(x => x.midi + tuning), width: style.width, marker: style.marker, visible,
+    customdata: notes.map((x, i) => [x.sargam, x.western, x.start, x.end, x.end - x.start, x.cents ?? 0, i]),
+    hovertemplate: "<b>%{customdata[0]}</b>  (%{customdata[1]})<br>%{customdata[2]:.2f}s → %{customdata[3]:.2f}s  (%{customdata[4]:.2f}s)<br>sung %{customdata[5]}¢ from the note<extra>" + name + "</extra>",
+  };
+}
+
+function drawPlot() {
+  const p = S.pitch, n = S.notation, tuning = tuningSt();
+  const [lo, hi] = yRange();
+  const traces = [
+    { x: p.time, y: p.midi_raw, mode: "lines", name: "raw pitch (incl. unvoiced)", line: { color: "#3a3f48", width: 1 },
+      hoverinfo: "skip", visible: "legendonly", type: "scattergl" },
+    { x: p.time, y: p.midi, mode: "lines", name: "vocal pitch", line: { color: css("--voice"), width: 1.6 }, type: "scattergl",
+      connectgaps: false, hovertemplate: "%{x:.2f}s · %{customdata}<extra></extra>",
+      customdata: p.midi.map(m => m == null ? "" : `${midiName(Math.round(m - tuning))} ${(((m - tuning) - Math.round(m - tuning)) * 100).toFixed(0).replace(/^(?!-)/, "+")}¢`) },
+  ];
+  const shapes = [{ type: "line", xref: "x", yref: "paper", x0: S.cursor ?? p.start, x1: S.cursor ?? p.start, y0: 0, y1: 1,
+                    line: { color: css("--accent"), width: 1.5 } }];  // playhead = shapes[0]
+  if (n) {
+    traces.push(noteBars(n.variants.detailed.notes, "auto: detailed", { width: 0.9, marker: { color: "rgba(0,0,0,0)", line: { color: "rgba(240,165,58,0.8)", width: 1.5 } } }, "legendonly", "ref"));
+    traces.push(noteBars(n.variants.simple.notes, "auto: simple", { width: 1.0, marker: { color: "rgba(0,0,0,0)", line: { color: css("--simple"), width: 2 } } }, "legendonly", "ref"));
+    traces.push(noteBars(S.edit, "notes (working copy)", { width: 0.72, marker: { color: "rgba(240,165,58,0.42)", line: { color: "rgba(240,165,58,1)", width: 1 } } }, true, "edit"));
+    traces.push({ type: "scatter", mode: "text", name: "sargam", x: S.edit.map(x => x.start), y: S.edit.map(x => x.midi + tuning + 0.62),
+                  text: S.edit.map(x => x.sargam), textposition: "middle right", hoverinfo: "skip", showlegend: false,
+                  textfont: { color: css("--accent2"), size: 12, family: "Consolas, monospace" } });
+    const sel = S.edit[S.selIdx];
+    if (sel) traces.push({ type: "bar", orientation: "h", name: "selected", showlegend: false, hoverinfo: "skip",
+                           base: [sel.start], x: [sel.end - sel.start], y: [sel.midi + tuning], width: 0.95,
+                           marker: { color: "rgba(255,255,255,0.12)", line: { color: "#ffffff", width: 2.5 } } });
+    if (n.onsets && n.onsets.length)
+      traces.push({ type: "scatter", mode: "markers", name: "syllable onsets", x: n.onsets, y: n.onsets.map(() => lo + 0.45),
+                    marker: { symbol: "line-ns-open", size: 14, line: { color: "#7d8594", width: 1.5 } },
+                    hovertemplate: "onset %{x:.2f}s<extra></extra>" });
+    for (let m = n.sa_midi - 24; m <= n.sa_midi + 24; m += 12)
+      if (m + tuning >= lo && m + tuning <= hi)
+        shapes.push({ type: "line", xref: "paper", x0: 0, x1: 1, y0: m + tuning, y1: m + tuning, layer: "below",
+                      line: { color: css("--sa"), width: 1, dash: "dot" } });
+  }
+  if (S.range) shapes.push({ type: "rect", xref: "x", yref: "paper", x0: S.range[0], x1: S.range[1], y0: 0, y1: 1,
+                             fillcolor: "rgba(111,207,151,0.13)", line: { color: css("--range"), width: 1 }, layer: "below" });
+  const layout = {
+    paper_bgcolor: css("--panel"), plot_bgcolor: "#16191e", font: { color: css("--text"), size: 11 },
+    margin: { l: 78, r: 14, t: 10, b: 40 }, barmode: "overlay", hovermode: "closest",
+    dragmode: S.dragmode === "range" ? false : "zoom",
+    uirevision: `${p.start}-${p.end}`,   // keep the user's zoom across redraws
+    xaxis: { title: "time in song (s)", range: [p.start, p.end], gridcolor: "#262a31", zeroline: false },
+    yaxis: { range: [lo, hi], gridcolor: "#262a31", zeroline: false, ...yTicks(lo, hi, tuning, n ? n.sa_midi : null) },
+    legend: { orientation: "h", y: 1.07, x: 1, xanchor: "right", bgcolor: "rgba(0,0,0,0)" },
+    shapes,
+  };
+  Plotly.react("plot", traces, layout, { displaylogo: false, responsive: true, scrollZoom: false, doubleClick: "reset",
+                                         modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d"] });
+  bindPlotEvents();
+  $("#plot").classList.toggle("rangemode", S.dragmode === "range");
+  $("#legend-note").innerHTML = n
+    ? `<i style="background:rgba(240,165,58,.6)"></i>notes (working copy) <i style="background:#fff"></i>selected <i style="background:${css("--sa")}"></i>Sa (dotted) <i style="background:${css("--voice")}"></i>vocal pitch <i style="background:#7d8594"></i>syllable onsets (ticks at bottom) · toggle “auto: detailed / simple” in the legend to compare · y-axis is drawn at the singer's tuning (${n.tuning_cents >= 0 ? "+" : ""}${n.tuning_cents.toFixed(0)}¢)`
+    : `<i style="background:${css("--voice")}"></i>vocal pitch · run “Extract notation” to overlay notes`;
+}
+
+// pixel -> song time (null if outside the plot area)
+function eventTime(ev) {
+  const plot = $("#plot"), xa = plot._fullLayout && plot._fullLayout.xaxis;
+  if (!xa) return null;
+  const r = plot.getBoundingClientRect(), px = ev.clientX - r.left - xa._offset;
+  const ya = plot._fullLayout.yaxis, py = ev.clientY - r.top - ya._offset;
+  if (px < 0 || px > xa._length || py < 0 || py > ya._length) return null;
+  return xa.p2l(px);
+}
+
+let plotBound = false;
+function bindPlotEvents() {
+  const plot = $("#plot");
+  if (plot.removeAllListeners) plot.removeAllListeners("plotly_click");
+  plot.on("plotly_click", ev => {
+    const pt = ev.points && ev.points.find(q => q.data.meta === "edit");
+    if (pt) { S.selIdx = pt.customdata ? pt.customdata[6] : pt.pointIndex; updateNoteInfo(); drawPlot(); }
+  });
+  if (plotBound) return;
+  plotBound = true;
+  let down = null, dragging = false;
+  plot.addEventListener("mousedown", ev => {
+    const t = eventTime(ev); if (t == null || ev.button !== 0) return;
+    down = { x: ev.clientX, t };
+    if (S.dragmode === "range") { dragging = true; S.range = null; ev.preventDefault(); }
+  }, true);
+  window.addEventListener("mousemove", ev => {
+    if (!dragging || !down) return;
+    const t = eventTime(ev) ?? null; if (t == null) return;
+    S.range = [Math.min(down.t, t), Math.max(down.t, t)];
+    Plotly.relayout("plot", { shapes: plotShapesWithRange() });
+  });
+  window.addEventListener("mouseup", ev => {
+    if (!down) return;
+    const moved = Math.abs(ev.clientX - down.x) > 4;
+    if (dragging) {
+      dragging = false;
+      if (!moved || !S.range || S.range[1] - S.range[0] < 0.05) S.range = null;
+      updateRangeInfo(); drawPlot();
+    }
+    if (!moved) { setCursor(down.t); }   // simple click: move playhead
+    down = null;
+  });
+}
+function plotShapesWithRange() {
+  const shapes = ($("#plot").layout.shapes || []).filter(s => s.type !== "rect");
+  if (S.range) shapes.push({ type: "rect", xref: "x", yref: "paper", x0: S.range[0], x1: S.range[1], y0: 0, y1: 1,
+                             fillcolor: "rgba(111,207,151,0.13)", line: { color: css("--range"), width: 1 }, layer: "below" });
+  return shapes;
+}
+
+// ---------------------------------------------------------------- transport (synced playhead)
+const audio = new Audio(); audio.preload = "auto";
+function srcUrl(name) {
+  if (!S.pitch) return null;
+  if (["selection", "vocals", "accompaniment"].includes(name)) return S.pitch.audio[name];
+  return S.rendered ? S.rendered.audio[name] : null;
+}
+function setSource(name) {
+  const url = srcUrl(name); if (!url) return;
+  S.src = name;
+  $$("#src button").forEach(b => b.classList.toggle("on", b.dataset.src === name));
+  if (audio.getAttribute("src") !== url) {
+    const playing = !audio.paused;
+    audio.src = url;
+    audio.addEventListener("loadedmetadata", () => {
+      if (S.cursor != null) audio.currentTime = Math.max(0, S.cursor - S.pitch.start);
+      if (playing) audio.play();
+    }, { once: true });
+  }
+}
+function enableInstrumentSources(on) {
+  $$("#src button").forEach(b => { if (b.dataset.src.includes("instrument")) b.disabled = !on; });
+}
+$$("#src button").forEach(b => b.onclick = () => setSource(b.dataset.src));
+function togglePlay() {
+  if (!audio.src) return;
+  if (audio.paused) { S.stopAt = null; audio.play(); } else audio.pause();
+}
+$("#playbtn").onclick = togglePlay;
+audio.onplay = () => { $("#playbtn").textContent = "❚❚ Pause"; tick(); };
+audio.onpause = audio.onended = () => { $("#playbtn").textContent = "▶ Play"; S.stopAt = null; movePlayhead(); };
+function setCursor(t) {
+  if (!S.pitch) return;
+  t = Math.min(S.pitch.end, Math.max(S.pitch.start, t));
+  S.cursor = t;
+  if (audio.src) audio.currentTime = t - S.pitch.start;
+  movePlayhead(t);
+}
+function playSpan(a, b) {
+  if (!audio.src) return;
+  audio.currentTime = Math.max(0, a - S.pitch.start);
+  audio.play().then(() => { S.stopAt = b; });
+}
+let lastDraw = 0;
+function movePlayhead(tAbs) {
+  if (!S.pitch) return;
+  const t = tAbs ?? (S.pitch.start + (audio.currentTime || 0));
+  if (!audio.paused || tAbs != null) S.cursor = t;
+  $("#tdisp").textContent = fmt(t);
+  if ($("#plot").layout) Plotly.relayout("plot", { "shapes[0].x0": t, "shapes[0].x1": t });
+}
+function tick(ts) {
+  if (audio.paused) return;
+  const t = S.pitch.start + audio.currentTime;
+  if (S.stopAt != null && t >= S.stopAt) { audio.pause(); return; }
+  if (!ts || ts - lastDraw > 50) { lastDraw = ts || 0; movePlayhead(); }
+  requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------------------------- step 3: notation
+(async () => {
+  const { instruments, default: def } = await api("/api/instruments");
+  const sel = $("#instrument");
+  for (const [k, label] of Object.entries(instruments)) sel.add(new Option(label, k, k === def, k === def));
+  NOTE.forEach(nm => $("#tonic").add(new Option(nm, nm)));
+  try {
+    const cfg = await api("/api/config");
+    LEVELS = cfg.levels; PRESETS = cfg.presets;
+    // default values of all other fields come from TranscribeParams too
+    for (const [k, v] of Object.entries(cfg.defaults)) {
+      const el = $("#p-" + k);
+      if (el && el.tagName === "INPUT") el.value = v;
+      else if (el && el.tagName === "SELECT") el.value = v ? "1" : "";
+    }
+    $("#split-onsets").checked = !!cfg.defaults.split_onsets;
+    applyDetail(+$("#detail").value);
+  } catch (e) { console.warn("config fetch failed, using built-in presets", e); }
+})();
+
+function applyDetail(lvl) {
+  $("#detail-out").textContent = LEVELS[lvl - 1];
+  for (const [k, v] of Object.entries(preset(lvl))) $("#p-" + k).value = v;
+}
+$("#detail").oninput = e => applyDetail(+e.target.value);
+$("#rdetail").oninput = e => $("#rdetail-out").textContent = LEVELS[+e.target.value - 1];
+
+function collectParams() {
+  const p = { instrument: $("#instrument").value, tonic: $("#tonic").value, split_onsets: $("#split-onsets").checked };
+  $$("[id^=p-]").forEach(el => {
+    const k = el.id.slice(2);
+    p[k] = el.tagName === "SELECT" ? !!el.value : +el.value;
+  });
+  return p;
+}
+
+$("#btn-notate").onclick = async () => {
+  if (S.dirty && !confirm("Re-running the notation replaces your working copy and its edits. Continue?")) return;
+  const btn = $("#btn-notate"); btn.disabled = true;
+  const ui = progressUI("#prog-notate");
+  ui.set(0, "Starting…");
+  try {
+    const res = await runJob("/api/notate", { sid: S.sid, params: collectParams() }, ui);
+    S.notation = res;
+    ui.done(`Notation ready · ${res.variants.detailed.notes.length} detailed / ${res.variants.simple.notes.length} simple notes · ${res.onsets.length} syllable onsets`);
+    startWorkingCopy(S.base);
+    enableInstrumentSources(true);
+    $("#refine").style.display = "block";
+    if (S.src.includes("instrument")) setSource(S.src);
+  } catch (e) { ui.fail(e.message); }
+  btn.disabled = false;
+};
+
+function startWorkingCopy(base) {
+  S.base = base;
+  $$("#base button").forEach(b => b.classList.toggle("on", b.dataset.v === base));
+  const v = S.notation.variants[base];
+  S.edit = clone(v.notes);
+  S.rendered = { audio: v.audio, files: v.files, notation: v.notation };
+  S.dirty = 0; S.undo = []; S.redo = []; S.selIdx = -1;
+  refreshAll();
+}
+$$("#base button").forEach(b => b.onclick = () => {
+  if (b.dataset.v === S.base) return;
+  if (S.dirty && !confirm("Start over from the " + b.dataset.v + " version? Your edits will be discarded.")) return;
+  startWorkingCopy(b.dataset.v);
+  if (S.src.includes("instrument")) setSource(S.src);
+});
+
+function showResults() {
+  const n = S.notation, r = S.rendered;
+  const tc = n.tuning_cents;
+  $("#chips").innerHTML = [
+    `Sa <b>${n.sa}</b> <span class="hint">(${n.sa_candidates.map(c => c[0]).join(" / ")})</span>`,
+    `Madhya Sa key <b>${midiName(n.sa_midi)}</b>`,
+    `Scale <b>${n.scale}</b>`,
+    `Key estimate <b>${n.key}</b>`,
+    `Tuning <b>${tc >= 0 ? "+" : ""}${tc.toFixed(0)}¢</b> vs A440`,
+    `Notes <b>${S.edit.length}</b>`,
+  ].map(x => `<span class="chip">${x}</span>`).join("");
+  $("#notation").textContent = r.notation;
+  $("#downloads").innerHTML = "Download (last render): " +
+    Object.entries(r.files).map(([k, u]) => `<a href="${u}" download>${k}</a>`).join("");
+  $("#results").style.display = "block";
+}
+
+// ---------------------------------------------------------------- step 4: editing
+function refreshAll() { updateEditState(); updateNoteInfo(); updateRangeInfo(); showResults(); drawPlot(); }
+function updateEditState() {
+  const el = $("#edit-state"), btn = $("#btn-render");
+  el.innerHTML = S.dirty ? `<span class="badge">${S.dirty} unrendered edit${S.dirty > 1 ? "s" : ""}</span> <span class="hint">audio & text show the last render</span>`
+                         : `<span class="badge ok">audio & notation up to date</span>`;
+  btn.classList.toggle("attn", S.dirty > 0);
+  $("#btn-undo").disabled = !S.undo.length; $("#btn-redo").disabled = !S.redo.length;
+}
+function updateNoteInfo() {
+  const n = S.edit[S.selIdx];
+  $("#note-info").textContent = n
+    ? `#${S.selIdx + 1}  ${n.sargam} (${n.western})  ${n.start.toFixed(2)}–${n.end.toFixed(2)}s  ${(n.end - n.start).toFixed(2)}s  sung ${n.cents >= 0 ? "+" : ""}${n.cents}¢`
+    : "No note selected (tools act on the note under the playhead)";
+}
+function updateRangeInfo() {
+  $("#range-info").textContent = S.range
+    ? `${S.range[0].toFixed(2)} → ${S.range[1].toFixed(2)} s  (${(S.range[1] - S.range[0]).toFixed(2)} s, ${notesIn(S.range).length} notes)`
+    : "No range selected";
+}
+const notesIn = ([a, b]) => S.edit.filter(n => n.end > a && n.start < b);
+
+function snapshot() { S.undo.push(JSON.stringify(S.edit)); if (S.undo.length > 300) S.undo.shift(); S.redo = []; }
+function commit(keepNote) {
+  S.edit = S.edit.filter(n => n.end - n.start >= 0.015).sort((a, b) => a.start - b.start);
+  S.selIdx = keepNote ? S.edit.indexOf(keepNote) : -1;
+  S.dirty++;
+  refreshAll();
+}
+function label(n) {
+  const sa = S.notation.sa_midi;
+  n.sargam = sargam(n.midi, sa); n.western = midiName(n.midi);
+  if (n.sung != null) n.cents = Math.round((n.sung - tuningSt() - n.midi) * 100);
+  return n;
+}
+// median of the sung pitch inside [a, b]
+function sungMedian(a, b) {
+  const p = S.pitch, v = [];
+  for (let i = 0; i < p.time.length; i++) if (p.time[i] >= a && p.time[i] < b && p.midi[i] != null) v.push(p.midi[i]);
+  if (v.length < 2) return null;
+  v.sort((x, y) => x - y);
+  return v[Math.floor(v.length / 2)];
+}
+function fit(n) {
+  const m = sungMedian(n.start, n.end);
+  if (m != null) { n.sung = Math.round(m * 1000) / 1000; n.midi = Math.round(m - tuningSt()); }
+  return label(n);
+}
+function target() {   // selected note, else the note under the playhead
+  if (S.edit[S.selIdx]) return S.edit[S.selIdx];
+  return S.edit.find(n => S.cursor != null && n.start <= S.cursor && S.cursor < n.end) || null;
+}
+function flash(msg) { $("#note-info").textContent = msg; setTimeout(updateNoteInfo, 1800); }
+
+const ACT = {
+  split() {
+    const n = target(), t = S.cursor;
+    if (!n) return flash("Put the playhead inside a note (click on it) to split");
+    if (!(t > n.start + 0.02 && t < n.end - 0.02)) return flash("Playhead must be inside the note (≥20 ms from its ends)");
+    snapshot();
+    const b = fit({ ...n, start: t, onset: true });
+    n.end = t; fit(n);
+    S.edit.push(b); commit(b);
+  },
+  merge() {
+    const n = target(); if (!n) return flash("Select a note first");
+    const i = S.edit.indexOf(n), m = S.edit[i + 1];
+    if (!m) return flash("No next note to merge with");
+    snapshot();
+    const keep = (n.end - n.start) >= (m.end - m.start) ? n : m;
+    const merged = label({ ...keep, start: n.start, end: m.end, onset: n.onset,
+                           sung: ((n.sung ?? n.midi) * (n.end - n.start) + (m.sung ?? m.midi) * (m.end - m.start)) / (m.end - n.start) });
+    S.edit.splice(i, 2, merged); commit(merged);
+  },
+  delete() {
+    const n = target(); if (!n) return flash("Select a note first");
+    snapshot(); S.edit.splice(S.edit.indexOf(n), 1); commit();
+  },
+  up() { const n = target(); if (!n) return; snapshot(); n.midi += 1; label(n); commit(n); },
+  down() { const n = target(); if (!n) return; snapshot(); n.midi -= 1; label(n); commit(n); },
+  fit() { const n = target(); if (!n) return; snapshot(); fit(n); commit(n); },
+  start() {
+    const n = target(), t = S.cursor; if (!n || t == null) return;
+    if (t >= n.end - 0.02) return flash("Playhead must be before the note's end");
+    snapshot(); n.start = t;
+    S.edit.forEach(o => { if (o !== n && o.start < t && o.end > t && o.start < n.start) o.end = t; });
+    S.edit = S.edit.filter(o => o === n || !(o.start >= t && o.end <= n.end));
+    fit(n); commit(n);
+  },
+  end() {
+    const n = target(), t = S.cursor; if (!n || t == null) return;
+    if (t <= n.start + 0.02) return flash("Playhead must be after the note's start");
+    snapshot(); n.end = t;
+    S.edit.forEach(o => { if (o !== n && o.start < t && o.end > t && o.start > n.start) o.start = t; });
+    S.edit = S.edit.filter(o => o === n || !(o.start >= n.start && o.end <= t));
+    fit(n); commit(n);
+  },
+  add() {
+    const t = S.cursor; if (t == null) return;
+    if (S.edit.some(n => n.start <= t && t < n.end)) return flash("There is already a note here — use Split instead");
+    const prev = S.edit.filter(n => n.end <= t).pop(), next = S.edit.find(n => n.start > t);
+    const a = Math.max(t, prev ? prev.end : -1e9), b = Math.min(t + 0.3, next ? next.start : S.pitch.end);
+    if (b - a < 0.03) return flash("Not enough room here");
+    snapshot();
+    const nb = prev || next;
+    const nn = fit({ start: a, end: b, midi: nb ? nb.midi : 60, sung: null, cents: 0, velocity: 96, onset: true });
+    S.edit.push(nn); commit(nn);
+  },
+  playnote() { const n = target(); if (n) playSpan(n.start, n.end); },
+  playrange() { if (S.range) playSpan(S.range[0], S.range[1]); },
+  async retranscribe() {
+    if (!S.range) return flash("Choose “Select range” and drag on the plot first");
+    const [a, b] = S.range;
+    const params = { ...collectParams(), ...preset(+$("#rdetail").value), split_onsets: $("#rsplit").checked };
+    let res;
+    try { res = await api("/api/refine", { sid: S.sid, start: a, end: b, params }); }
+    catch (e) { return flash("Re-transcribe failed: " + e.message); }
+    snapshot();
+    clearSpan(a, b);
+    res.notes.forEach(n => { n.start = Math.max(n.start, a); n.end = Math.min(n.end, b); if (n.end - n.start >= 0.015) S.edit.push(n); });
+    commit();
+  },
+  fitrange() { if (!S.range) return; snapshot(); notesIn(S.range).forEach(fit); commit(); },
+  clearrange() { if (!S.range) return; snapshot(); clearSpan(...S.range); commit(); },
+};
+// remove [a, b] from the working copy, trimming notes that stick out of it
+function clearSpan(a, b) {
+  const out = [];
+  for (const n of S.edit) {
+    if (n.end <= a || n.start >= b) { out.push(n); continue; }
+    if (n.start < a) out.push(label({ ...n, end: a }));
+    if (n.end > b) out.push(label({ ...n, start: b }));
+  }
+  S.edit = out;
+}
+$$("[data-act]").forEach(b => b.onclick = () => ACT[b.dataset.act]());
+$$("#dragmode button").forEach(b => b.onclick = () => {
+  S.dragmode = b.dataset.m;
+  $$("#dragmode button").forEach(x => x.classList.toggle("on", x === b));
+  $("#plot-hint").textContent = S.dragmode === "range" ? "drag on the plot to select a time range · click to move the playhead"
+                                                        : "click the plot to move the playhead · drag to zoom · double-click to reset zoom";
+  drawPlot();
+});
+function undo() { if (!S.undo.length) return; S.redo.push(JSON.stringify(S.edit)); S.edit = JSON.parse(S.undo.pop()); S.selIdx = -1; S.dirty++; refreshAll(); }
+function redo() { if (!S.redo.length) return; S.undo.push(JSON.stringify(S.edit)); S.edit = JSON.parse(S.redo.pop()); S.selIdx = -1; S.dirty++; refreshAll(); }
+$("#btn-undo").onclick = undo; $("#btn-redo").onclick = redo;
+
+$("#btn-render").onclick = async () => {
+  const btn = $("#btn-render"); btn.disabled = true;
+  const ui = progressUI("#prog-render"); ui.set(0, "Starting…");
+  try {
+    const res = await runJob("/api/render_edited", { sid: S.sid, notes: S.edit, instrument: $("#instrument").value,
+                                                     transpose: +$("#p-transpose").value }, ui);
+    S.rendered = { audio: res.audio, files: res.files, notation: res.notation };
+    S.dirty = 0;
+    ui.done(`Rendered ${res.notes.length} notes`);
+    refreshAll();
+    if (S.src.includes("instrument")) { audio.removeAttribute("src"); setSource(S.src); }
+  } catch (e) { ui.fail(e.message); }
+  btn.disabled = false;
+};
+
+// ---------------------------------------------------------------- keyboard
+document.addEventListener("keydown", e => {
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName) || !S.pitch) return;
+  const k = e.key, editing = !!S.notation;
+  const go = fn => { e.preventDefault(); fn(); };
+  if (k === " ") return go(togglePlay);
+  if (k === "ArrowLeft" || k === "ArrowRight") {
+    const d = (k === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 0.2 : 0.02);
+    return go(() => setCursor((S.cursor ?? S.pitch.start) + d));
+  }
+  if (!editing) return;
+  if ((e.ctrlKey || e.metaKey) && (k === "z" || k === "Z")) return go(e.shiftKey ? redo : undo);
+  if ((e.ctrlKey || e.metaKey) && (k === "y" || k === "Y")) return go(redo);
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const map = { s: "split", S: "split", m: "merge", M: "merge", Delete: "delete", Backspace: "delete",
+                ArrowUp: "up", ArrowDown: "down", f: "fit", F: "fit", "[": "start", "]": "end",
+                n: "add", N: "add", p: "playnote", P: "playnote", r: "retranscribe", R: "retranscribe" };
+  if (map[k]) return go(() => ACT[map[k]]());
+  if (k === "," || k === ".") return go(() => {
+    if (!S.edit.length) return;
+    let i = S.selIdx;
+    if (i < 0) { i = S.edit.findIndex(n => n.start >= (S.cursor ?? 0)); if (i < 0) i = S.edit.length - 1; if (k === ",") i = Math.max(0, i - 1); }
+    else i = Math.min(S.edit.length - 1, Math.max(0, i + (k === "," ? -1 : 1)));
+    S.selIdx = i; setCursor(S.edit[i].start + 0.001); updateNoteInfo(); drawPlot();
+  });
+  if (k === "Escape") return go(() => { S.selIdx = -1; S.range = null; updateNoteInfo(); updateRangeInfo(); drawPlot(); });
+});
+</script>
+</body>
+</html>

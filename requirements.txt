@@ -1,0 +1,14 @@
+# Python 3.13 (3.14 is too new for parts of the audio stack).
+# Install torch first (CPU build; use the CUDA index URL instead if you have an NVIDIA GPU):
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+torch>=2.5
+torchaudio>=2.5
+demucs>=4.0.1
+torchcrepe>=0.0.23
+librosa>=0.10
+soundfile>=0.12
+pretty_midi>=0.2.10
+matplotlib>=3.8
+scipy>=1.11
+numpy>=1.26
+flask>=3.0
