@@ -176,3 +176,7 @@ tests/make_synthetic.py      synthetic test song with a known melody
 - [wavesurfer.js](https://wavesurfer.xyz/) (BSD-3) and [Plotly.js](https://plotly.com/javascript/) (MIT), vendored in `web/vendor/`
 
 Only use recordings you have the rights to. Don't commit copyrighted audio to this repo (`.gitignore` excludes audio files and outputs).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Bundled/downloaded third-party components keep their own licenses (see Credits).
